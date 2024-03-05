@@ -1,106 +1,72 @@
-import os
-import pickle
 import mlflow
+from mlflow.models import infer_signature
 
-mlflow.set_descripttion("Dropped Columns selection")
-
-os.makedirs("tmp")
-
-def train_and_evaluation(df)
-  # Train test split the dataset
-  ...
-
-  # Save the dataset to mlflow
-  dataset_data.to_csv("tmp/dataset.csv", index=False)
-  
-  # Save the plotted graph to mlflow
-  plot = dataframe.plot.scatter(x=0, y="salesprice")
-  fig = plot.get_figure()
-  fig.savefig("tmp/plot.png")
-
-  # Model training
-  model.fit(X_train, y_train)
-  
-  # Save the model
-  serialized_model = pickle.dumps(model)
-  with open("tmp/model.pkl", "wb") as f:
-    f.write(serialized_model)
-  
-
-  # Creating and store the model information to artifact, or using the customize model
-  mlflow.sklearn.log_model(model, "model_name") # Origin
-  mlflow.pyfunc.log_model( 
-    "custom_model",
-    python_model= WrappedLRModel(sklearn_features=list(feature.columns), cat_features=list(),
-    artifact=[],
-  )# Customized model
-  
-
-  # using the artifile to store model registry from the local to endpoint, can adding the path level if necessary
-  mlflow.log_artifact("tmp/model.pkl") # store a file from the path
-  mlflow.log_artifacts("tmp") # store all the files contain from the parent path
-
-  # Evaluate the model
-  y_pred = model.predict(X_test)
-
-err = mean_squared_error(y_test, y_pred)
-mlflow.log_metric("MSE", err)
-
-# Testing columns to drop to know which cols are the best to drop
-columns_to_drop = feature_columns + [None]
-
-for to_drop in columns_to_drop:
-  if to_drop:
-    dropped = selected.drop([to_drop], axis=1)
-  else:
-    dropped = selected
-
-  with mlflow.start_run():
-    mlflow.log_param("dropped_column", to_drop)
-    prepared = prepared_data(dropped)
-    train_and_evaluation(prepared)
+import pandas as pd
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, mean_squared_error, mean_absolute_percentage_error
 
 
-# The end to remove the tmp tree level (optional)
-shutil.rmtree("tmp")
+# Load the Iris dataset
+X, y = datasets.load_iris(return_X_y=True)
+
+# Split the data into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# Define the model hyperparameters
+params = {
+    "solver": "lbfgs",
+    "max_iter": 1000,
+    "multi_class": "auto",
+    "random_state": 8888,
+}
+
+# Train the model
+lr = LogisticRegression(**params)
+lr.fit(X_train, y_train)
+
+# Predict on the test set
+y_pred = lr.predict(X_test)
+
+# Calculate metrics
+accuracy = accuracy_score(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+mape = mean_absolute_percentage_error(y_test, y_pred)
+
+#######################################################################################
+# Set our tracking server uri for logging
+mlflow.set_tracking_uri(uri="http://127.0.0.1:8080")
+
+# Create a new MLflow Experiment
+mlflow.set_experiment("Testing_exp_1")
+
+# Start an MLflow run
+with mlflow.start_run():
+    # Log the hyperparameters
+    mlflow.log_params(params)
+
+    # Log the loss metric
+    mlflow.log_metric("accuracy", accuracy)
+    mlflow.log_metric("MSE", mse)
+    mlflow.log_metric("MAPE", mape)
+
+    # Set a tag that we can use to remind ourselves what this run was for
+    mlflow.set_tag("Training Info", "Basic LR model for iris data")
+
+    # Infer the model signature
+    signature = infer_signature(X_train, lr.predict(X_train))
+
+    # Log the model
+    model_info = mlflow.sklearn.log_model(
+        sk_model=lr,
+        artifact_path="exp_1_model",
+        signature=signature,
+        input_example=X_train,
+        registered_model_name="model_exp_1",
+    )
 
 
-############### Custom Model ############### 
-from mlflow.pyfunc import PythonModel
 
-# Creating the class to have the inheritance the model to customize of
-
-class WrappedLRModel(PythonModel):
-
-  def __init__(self, sklearn_features, cat_features)
-    """
-    cat_features: mapping from categories features name to all possible value
-    eg:
-    {
-    "Bldg type":["1fam", "som", ... ]
-    
-    } 
-
-    """
-    self.features_name = sklearn_features
-    self.cat_features = cat_features
-
-  def load_context(self, context):
-    with open(context.artifacts['orignal_sklearn_model'], "rb") as r:
-      self.lr_model = pickle.load(r) # Example
-
-  def _encode(self, row, col):
-    value = row[col]
-    row[value] = 1 
-    return row
-
-  def predict(self, context, model_input):
-    model_features = model_input
-    for col, unique_values in self.cat_features.items():
-      for uv in unique_values:
-        model_features[uv] = 0
-      model_features = model_features.apply(lambda x: self._encode(x, col), axis=1)
-    model_features = model_features.loc[:, self.features_name]
-
-
-    return self.lr_model.predict(model_features.to_numpy())
